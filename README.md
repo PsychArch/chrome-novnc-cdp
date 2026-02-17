@@ -76,7 +76,7 @@ This repo includes `.github/workflows/docker.yml`:
 - Tag pushes (`v*`): builds and publishes multi-arch images to GHCR (`ghcr.io`) and Docker Hub (`docker.io`)
 
 Publish auth uses:
-- Built-in `GITHUB_TOKEN` for GHCR
+- `GHCR_USERNAME` and `GHCR_TOKEN` GitHub repository secrets for GHCR
 - `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` GitHub repository secrets for Docker Hub
 
 The workflow publishes to:
