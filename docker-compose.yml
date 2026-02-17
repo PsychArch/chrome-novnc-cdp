@@ -1,0 +1,28 @@
+services:
+  chrome:
+    build:
+      context: .
+      args:
+        NOVNC_VERSION: ${NOVNC_VERSION:-1.6.0}
+        NOVNC_SHA256: ${NOVNC_SHA256:-5066103959ef4e9b10f37e5a148627360dd8414e4cf8a7db92bdbd022e728aaa}
+        WEBSOCKIFY_VERSION: ${WEBSOCKIFY_VERSION:-0.13.0}
+        WEBSOCKIFY_SHA256: ${WEBSOCKIFY_SHA256:-b6413e364efd04f3c92ec8c17747e3c4adc20157c2ef1c5d019a26d944a46df8}
+    ports:
+      - "127.0.0.1:6080:6080"
+      - "127.0.0.1:9222:9222"
+    environment:
+      TZ: ${TZ:-UTC}
+      SCREEN_WIDTH: ${SCREEN_WIDTH:-1920}
+      SCREEN_HEIGHT: ${SCREEN_HEIGHT:-1080}
+      SCREEN_DEPTH: ${SCREEN_DEPTH:-24}
+      PROFILE_MODE: ${PROFILE_MODE:-persistent}
+      CHROME_PROFILE_DIR: ${CHROME_PROFILE_DIR:-Default}
+      START_URL: ${START_URL:-about:blank}
+      CHROME_EXTRA_ARGS: ${CHROME_EXTRA_ARGS:-}
+    shm_size: "2g"
+    volumes:
+      - chrome-profile:/data
+    restart: unless-stopped
+
+volumes:
+  chrome-profile:

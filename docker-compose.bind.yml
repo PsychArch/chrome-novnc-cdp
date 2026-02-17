@@ -1,0 +1,4 @@
+services:
+  chrome:
+    volumes:
+      - ./chrome-profile:/data
