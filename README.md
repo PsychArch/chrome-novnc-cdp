@@ -73,10 +73,15 @@ The image includes a Docker `HEALTHCHECK` that validates:
 This repo includes `.github/workflows/docker.yml`:
 
 - Pull request / branch pushes: validates compose config, builds image, and smoke-tests CDP/noVNC endpoints
-- Tag pushes (`v*`): builds and publishes multi-arch image to GHCR (`ghcr.io`)
+- Tag pushes (`v*`): builds and publishes multi-arch images to GHCR (`ghcr.io`) and Docker Hub (`docker.io`)
 
-Publish auth uses the built-in `GITHUB_TOKEN` (no Docker Hub secrets required).
-The workflow publishes to `ghcr.io/<owner>/<repo>` (lowercased).
+Publish auth uses:
+- Built-in `GITHUB_TOKEN` for GHCR
+- `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` GitHub repository secrets for Docker Hub
+
+The workflow publishes to:
+- `ghcr.io/<owner>/<repo>` (lowercased)
+- `docker.io/<DOCKERHUB_USERNAME>/<repo-name>` (lowercased)
 
 ## License
 
