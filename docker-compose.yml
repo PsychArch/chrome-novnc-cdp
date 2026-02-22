@@ -19,6 +19,7 @@ services:
       CHROME_PROFILE_DIR: ${CHROME_PROFILE_DIR:-Default}
       START_URL: ${START_URL:-about:blank}
       CHROME_EXTRA_ARGS: ${CHROME_EXTRA_ARGS:-}
+      ALLOW_HOST_GATEWAY: ${ALLOW_HOST_GATEWAY:-}
     shm_size: "2g"
     volumes:
       - chrome-profile:/data

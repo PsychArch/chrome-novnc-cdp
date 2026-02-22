@@ -9,6 +9,7 @@ set -eu
 : "${CHROME_PROFILE_DIR:=Default}"
 : "${CHROME_EXTRA_ARGS:=}"
 : "${START_URL:=about:blank}"
+: "${ALLOW_HOST_GATEWAY:=}"
 
 case "${PROFILE_MODE}" in
   persistent|ephemeral)
@@ -32,7 +33,20 @@ if [ ! -f "/usr/share/zoneinfo/${TZ}" ]; then
   TZ=UTC
 fi
 
-export SCREEN_WIDTH SCREEN_HEIGHT SCREEN_DEPTH TZ PROFILE_MODE CHROME_PROFILE_DIR CHROME_EXTRA_ARGS START_URL CHROME_USER_DATA_DIR
+case "${ALLOW_HOST_GATEWAY}" in
+  1|true|TRUE)
+    HOST_GATEWAY="$(ip route | awk '/default/ {print $3; exit}')"
+    if [ -z "${HOST_GATEWAY}" ]; then
+      echo "Failed to resolve host gateway IP for host.docker.internal." >&2
+      exit 1
+    fi
+    if ! grep -q "host.docker.internal" /etc/hosts; then
+      echo "${HOST_GATEWAY} host.docker.internal" >> /etc/hosts
+    fi
+    ;;
+esac
+
+export SCREEN_WIDTH SCREEN_HEIGHT SCREEN_DEPTH TZ PROFILE_MODE CHROME_PROFILE_DIR CHROME_EXTRA_ARGS START_URL CHROME_USER_DATA_DIR ALLOW_HOST_GATEWAY
 
 ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime
 echo "${TZ}" > /etc/timezone

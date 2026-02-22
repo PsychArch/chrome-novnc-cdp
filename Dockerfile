@@ -14,6 +14,7 @@ RUN apk add --no-cache \
     chromium \
     socat \
     supervisor \
+    iproute2 \
     py3-numpy \
     font-noto \
     font-noto-cjk \
