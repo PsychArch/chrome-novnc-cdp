@@ -2,14 +2,44 @@
 
 Run Chromium with CDP and noVNC in one container.
 
-## Quick Start (Docker Hub)
+This README is the fast path for humans and agents who just want to run it.
+For deeper runtime details, source-based workflows, and internal notes, see
+[docs/operations.md](docs/operations.md).
+
+## Official Images
+
+Choose either registry:
+
+- Docker Hub: `docker.io/psycharch/chrome-novnc-cdp:latest`
+- GHCR: `ghcr.io/psycharch/chrome-novnc-cdp:latest`
+
+Examples below use an `IMAGE` variable so you can swap registries easily:
 
 ```bash
-docker pull docker.io/psycharch/chrome-novnc-cdp:latest
-docker run --rm -d --name chrome-novnc-cdp \
+IMAGE=docker.io/psycharch/chrome-novnc-cdp:latest
+# or:
+# IMAGE=ghcr.io/psycharch/chrome-novnc-cdp:latest
+```
+
+## Deployment Modes
+
+### 1. Named Network Mode
+
+Use this for normal local use. It publishes noVNC and CDP to `127.0.0.1` only.
+
+```bash
+docker pull "$IMAGE"
+docker rm -f chrome-novnc-cdp >/dev/null 2>&1 || true
+docker volume create chrome-profile >/dev/null
+docker network inspect chrome-novnc-cdp >/dev/null 2>&1 || \
+  docker network create chrome-novnc-cdp
+docker run -d --name chrome-novnc-cdp \
+  --restart unless-stopped \
+  --network chrome-novnc-cdp \
   -p 127.0.0.1:6080:6080 \
   -p 127.0.0.1:9222:9222 \
-  docker.io/psycharch/chrome-novnc-cdp:latest
+  -v chrome-profile:/data \
+  "$IMAGE"
 ```
 
 Open:
@@ -17,88 +47,83 @@ Open:
 - noVNC: `http://127.0.0.1:6080`
 - CDP version endpoint: `http://127.0.0.1:9222/json/version`
 
-Stop:
+If Chromium must reach a service running on the host, rerun with:
+
+```bash
+docker run -d --name chrome-novnc-cdp \
+  --restart unless-stopped \
+  --network chrome-novnc-cdp \
+  -p 127.0.0.1:6080:6080 \
+  -p 127.0.0.1:9222:9222 \
+  -e ALLOW_HOST_GATEWAY=1 \
+  -v chrome-profile:/data \
+  "$IMAGE"
+```
+
+Then use `http://host.docker.internal:PORT` inside Chromium.
+
+### 2. Host Network Mode
+
+Use this on Linux when Chromium must reach services bound to `127.0.0.1` on the host.
+In this mode, the container shares the host network namespace, so the service still
+binds noVNC and CDP to `127.0.0.1` for safety.
+
+```bash
+docker pull "$IMAGE"
+docker rm -f chrome-novnc-cdp >/dev/null 2>&1 || true
+docker volume create chrome-profile >/dev/null
+docker run -d --name chrome-novnc-cdp \
+  --restart unless-stopped \
+  --network host \
+  -e SERVICE_BIND_HOST=127.0.0.1 \
+  -v chrome-profile:/data \
+  "$IMAGE"
+```
+
+Open:
+
+- noVNC: `http://127.0.0.1:6080`
+- CDP version endpoint: `http://127.0.0.1:9222/json/version`
+
+Verify the listeners after startup:
+
+```bash
+ss -ltn '( sport = :6080 or sport = :9222 )'
+```
+
+Expected:
+
+- `127.0.0.1:6080`
+- `127.0.0.1:9222`
+
+## Quick Checks
+
+```bash
+curl -fsS http://127.0.0.1:6080/ >/dev/null
+curl -fsS http://127.0.0.1:9222/json/version
+```
+
+Stop and remove:
 
 ```bash
 docker rm -f chrome-novnc-cdp
 ```
 
-## Quick Start (From Source)
+Remove profile data too:
 
 ```bash
-cp .env.example .env
-docker compose up -d --build
+docker volume rm chrome-profile
 ```
 
-## Runtime Configuration
+## Security
 
-Set these in `.env` (see `.env.example`) or export them in your shell.
+- Keep `6080` and `9222` bound to localhost unless you add authentication and strict network restrictions.
+- Host network mode is for trusted local debugging. It is not a remote access mode.
+- `ALLOW_HOST_GATEWAY=1` makes host services reachable from Chromium. Enable it only when needed.
+- The browser profile may contain cookies and session data. Treat the `chrome-profile` volume as sensitive.
+- If you intentionally expose this service beyond localhost, put an authenticated reverse proxy in front and restrict source IPs.
 
-- `TZ=UTC`
-- `SCREEN_WIDTH=1920`
-- `SCREEN_HEIGHT=1080`
-- `SCREEN_DEPTH=24`
-- `PROFILE_MODE=persistent` (`ephemeral` uses `/tmp/chrome-data`)
-- `CHROME_USER_DATA_DIR` (optional explicit override)
-- `CHROME_PROFILE_DIR=Default`
-- `START_URL=about:blank`
-- `CHROME_EXTRA_ARGS=`
-- `ALLOW_HOST_GATEWAY=` (set to `1` or `true` to map `host.docker.internal`)
+## More
 
-## Profile Storage
-
-Default persistence uses a named Docker volume:
-
-- Volume: `chrome-profile`
-- Mount point in container: `/data`
-- Reset profile data: `docker compose down -v`
-
-Optional bind mount mode is available via override file:
-
-```bash
-mkdir -p chrome-profile
-docker compose -f docker-compose.yml -f docker-compose.bind.yml up -d --build
-```
-
-## Host Access From Chrome
-
-By default, the container cannot resolve the host gateway. To allow Chromium to reach host ports,
-set `ALLOW_HOST_GATEWAY=1` (or `true`) and use `http://host.docker.internal:PORT`.
-This makes host services reachable from inside the container; use it only when needed.
-
-If connectivity still fails on Linux hosts, a firewall rule may be blocking Docker bridge traffic.
-For example with UFW you can allow the Docker bridge interface:
-
-```bash
-sudo ufw allow in on br-<docker-bridge-id>
-```
-
-You can find the bridge name via:
-
-```bash
-docker network inspect chrome-novnc-cdp_default -f '{{.Id}}'
-ip link | rg 'br-<id-prefix>'
-```
-
-Example:
-
-1. Start a host service: `python -m http.server 9000`
-2. Set `ALLOW_HOST_GATEWAY=1` in `.env`
-3. Visit `http://host.docker.internal:9000` in Chromium
-
-## Healthcheck
-
-The image includes a Docker `HEALTHCHECK` that validates:
-
-- CDP endpoint: `http://127.0.0.1:9222/json/version`
-- noVNC endpoint: `http://127.0.0.1:6080/`
-
-## Security Notes
-
-- Keep `6080` and `9222` bound to localhost unless you add authentication and network restrictions.
-- If you use bind mount mode, do not commit `chrome-profile/` (contains cookies/session data).
-- `x11vnc` currently runs with `-nopw`; if exposing it beyond localhost, put an authenticated reverse proxy in front and restrict source IPs.
-
-## License
-
-MIT. See `LICENSE`.
+- Runtime details and source-based usage: [docs/operations.md](docs/operations.md)
+- License: `MIT`

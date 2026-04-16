@@ -1,0 +1,7 @@
+services:
+  chrome:
+    network_mode: host
+    networks: !reset []
+    ports: !reset []
+    environment:
+      SERVICE_BIND_HOST: 127.0.0.1
