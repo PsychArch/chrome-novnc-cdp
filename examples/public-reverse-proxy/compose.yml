@@ -1,0 +1,51 @@
+# Public reverse-proxy deployment on one hostname with path prefixes:
+#   https://example.com/browser -> noVNC
+#   https://example.com/cdp     -> managed CDP
+services:
+  chrome:
+    image: ${IMAGE:-docker.io/psycharch/chrome-novnc-cdp:latest}
+    restart: unless-stopped
+    networks:
+      - browser-internal
+    expose:
+      - "6080"
+      - "9222"
+    environment:
+      TZ: ${TZ:-UTC}
+      BROWSER_WIDTH: ${BROWSER_WIDTH:-1920}
+      BROWSER_HEIGHT: ${BROWSER_HEIGHT:-1080}
+      BROWSER_START_URL: ${BROWSER_START_URL:-about:blank}
+      BIND_HOST: 0.0.0.0
+      PUBLIC_CDP_BASE_PATH: /cdp
+      MAX_SESSIONS: ${MAX_SESSIONS:-4}
+      SESSION_IDLE_TIMEOUT: ${SESSION_IDLE_TIMEOUT:-1h}
+      CDP_AUTH_TOKEN: ${CDP_AUTH_TOKEN:?set CDP_AUTH_TOKEN before exposing CDP}
+      CDP_ALLOW_UNAUTHENTICATED_LOCAL: "false"
+      CDP_ALLOW_QUERY_TOKEN: "false"
+    shm_size: "2g"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - chrome
+    networks:
+      - browser-internal
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST, for example example.com}
+      NOVNC_BASIC_AUTH: ${NOVNC_BASIC_AUTH:?set a Caddy basic_auth hash}
+
+networks:
+  browser-internal:
+    name: chrome-novnc-cdp-public
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,24 @@
+# Single-host path-prefix example:
+#   https://example.com/browser -> noVNC
+#   https://example.com/cdp     -> managed CDP
+# Keep PUBLIC_CDP_BASE_PATH=/cdp on the chrome service.
+
+{$PUBLIC_HOST} {
+  handle /browser* {
+    basic_auth {
+      viewer {$NOVNC_BASIC_AUTH}
+    }
+
+    @browserRoot path /browser /browser/
+    redir @browserRoot /browser/vnc.html?path=browser/websockify 302
+
+    uri strip_prefix /browser
+    reverse_proxy chrome:6080
+  }
+
+  handle /cdp* {
+    # CDP/session auth is enforced by chrome-novnc-cdp with CDP_AUTH_TOKEN.
+    # The upstream service accepts /cdp-prefixed requests and reports /cdp WebSocket URLs.
+    reverse_proxy chrome:9222
+  }
+}

@@ -3,19 +3,19 @@
 ## Project Structure & Module Organization
 This repository is a Docker-first project. Core files live at the root:
 - `Dockerfile`: builds the Alpine image with Chromium, noVNC, and websockify.
-- `docker-compose.yml`: local orchestration, port bindings, env wiring, and volume mounts.
-- `docker-compose.bind.yml`: optional override to use `./chrome-profile` bind mount instead of the default named volume.
+- `docker-compose.yml`: local orchestration, port bindings, and env wiring.
+- `docker-compose.host.yml`: optional override for Linux host-network mode.
 - `entrypoint.sh`, `healthcheck.sh`, `supervisord.conf`: container startup, health checks, and process supervision.
+- `session-manager/server.mjs`: managed CDP/session API and WebSocket proxy.
 - `.github/workflows/docker.yml`: CI validation/build and tagged release publishing.
 
-Local runtime state is stored in the named Docker volume `chrome-profile` by default. Copy `.env.example` to `.env` for local overrides.
-If you opt into bind mount mode via `docker-compose.bind.yml`, local profile data is stored in `chrome-profile/` (gitignored).
+Managed sessions use temporary browser data by default. Copy `.env.example` to `.env` for local overrides.
 
 ## Build, Test, and Development Commands
 - `cp .env.example .env`: create local config defaults.
 - `docker compose up -d --build`: build and start the stack.
 - `docker compose logs -f chrome`: stream container logs.
-- `docker compose down` (or `docker compose down -v`): stop services; `-v` also removes volumes.
+- `docker compose down`: stop services.
 - `docker compose config`: validate compose configuration (same check used in CI).
 - `docker build --pull -t chrome-novnc-cdp:test .`: local image build check.
 - `curl -fsS http://127.0.0.1:9222/json/version` and `curl -fsS http://127.0.0.1:6080/`: smoke-test CDP and noVNC endpoints.
@@ -23,7 +23,7 @@ If you opt into bind mount mode via `docker-compose.bind.yml`, local profile dat
 ## Coding Style & Naming Conventions
 - Shell scripts should remain POSIX `sh` and start with `set -eu`.
 - Match existing formatting: 2-space indentation in shell/YAML and readable line wrapping for long commands.
-- Use `UPPER_SNAKE_CASE` for env vars (example: `CHROME_PROFILE_DIR`, `CHROME_EXTRA_ARGS`).
+- Use `UPPER_SNAKE_CASE` for env vars (example: `BROWSER_EXTRA_ARGS`, `MAX_SESSIONS`).
 - Preserve security-focused defaults (localhost bindings, pinned download checksums).
 - No formatter/linter is configured here; follow nearby style and keep edits minimal and targeted.
 

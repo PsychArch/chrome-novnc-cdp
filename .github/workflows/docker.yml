@@ -25,24 +25,56 @@ jobs:
       - name: Build image
         run: docker build --pull -t chrome-novnc-cdp:test .
 
-      - name: Smoke test container endpoints
+      - name: Smoke test managed CDP endpoints
         run: |
           docker run -d --name chrome-novnc-cdp-smoke \
             -p 127.0.0.1:6080:6080 \
             -p 127.0.0.1:9222:9222 \
+            -e SESSION_IDLE_TIMEOUT=60s \
+            -e SESSION_SWEEP_INTERVAL=5s \
+            -e MAX_SESSIONS=1 \
             chrome-novnc-cdp:test
 
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:9222/json/version >/dev/null && \
+            if curl -fsS http://127.0.0.1:9222/healthz >/dev/null && \
                curl -fsS http://127.0.0.1:6080/ >/dev/null; then
-              exit 0
+              break
+            fi
+            if [ "$i" = 30 ]; then
+              echo "Smoke test failed: manager or noVNC did not become ready" >&2
+              docker logs chrome-novnc-cdp-smoke || true
+              exit 1
             fi
             sleep 2
           done
 
-          echo "Smoke test failed: endpoints did not become ready in time" >&2
-          docker logs chrome-novnc-cdp-smoke || true
-          exit 1
+          session_json="$(curl -fsS -X POST http://127.0.0.1:9222/sessions)"
+          session_id="$(SESSION_JSON="$session_json" node -e '
+            const body = JSON.parse(process.env.SESSION_JSON);
+            if (!body || typeof body.id !== "string" || !body.id) {
+              console.error("POST /sessions did not return an id:", process.env.SESSION_JSON);
+              process.exit(1);
+            }
+            process.stdout.write(body.id);
+          ')"
+          if [ -z "$session_id" ]; then
+            echo "Smoke test failed: empty session id from POST /sessions" >&2
+            docker logs chrome-novnc-cdp-smoke || true
+            exit 1
+          fi
+          curl -fsS "http://127.0.0.1:9222/sessions/${session_id}/json/version" >/dev/null
+          curl -fsS http://127.0.0.1:9222/json/version >/dev/null
+
+          status="$(curl -sS -o /tmp/sessions-capacity.json -w '%{http_code}' \
+            -X POST http://127.0.0.1:9222/sessions)"
+          if [ "$status" != "429" ]; then
+            echo "Smoke test failed: expected 429 on capacity, got $status" >&2
+            cat /tmp/sessions-capacity.json >&2 || true
+            docker logs chrome-novnc-cdp-smoke || true
+            exit 1
+          fi
+
+          curl -fsS -X DELETE "http://127.0.0.1:9222/sessions/${session_id}" >/dev/null
 
       - name: Cleanup smoke test container
         if: always()
@@ -58,6 +90,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

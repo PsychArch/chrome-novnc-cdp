@@ -7,18 +7,16 @@ ARG WEBSOCKIFY_SHA256=b6413e364efd04f3c92ec8c17747e3c4adc20157c2ef1c5d019a26d944
 
 # Install packages
 RUN apk add --no-cache \
-    xorg-server \
-    xvfb-run \
+    xvfb \
     x11vnc \
     openbox \
     chromium \
-    socat \
+    nodejs \
+    python3 \
     supervisor \
     iproute2 \
-    py3-numpy \
     font-noto \
     font-noto-cjk \
-    bash \
     curl \
     tzdata
 
@@ -36,16 +34,16 @@ RUN mkdir -p /opt/noVNC /tmp/downloads \
     && ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html \
     && rm -rf /tmp/downloads
 
-# Create non-root user and profile directory
-RUN adduser -D -h /home/chrome chrome \
-    && mkdir -p /data \
-    && chown chrome:chrome /data
+# Create non-root user for Chromium and the session manager
+RUN adduser -D -h /home/chrome chrome
 
 COPY supervisord.conf /etc/supervisord.conf
 COPY entrypoint.sh /entrypoint.sh
 COPY healthcheck.sh /healthcheck.sh
+COPY session-manager /opt/session-manager
 RUN chmod +x /entrypoint.sh
 RUN chmod +x /healthcheck.sh
+RUN chown -R chrome:chrome /opt/session-manager
 
 EXPOSE 6080 9222
 

@@ -4,4 +4,4 @@ services:
     networks: !reset []
     ports: !reset []
     environment:
-      SERVICE_BIND_HOST: 127.0.0.1
+      BIND_HOST: 127.0.0.1

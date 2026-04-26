@@ -1,0 +1,18 @@
+# Linux-only local debugging mode.
+# Use when Chromium must reach host apps bound to 127.0.0.1.
+services:
+  chrome:
+    image: ${IMAGE:-docker.io/psycharch/chrome-novnc-cdp:latest}
+    container_name: chrome-novnc-cdp
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TZ: ${TZ:-UTC}
+      BROWSER_WIDTH: ${BROWSER_WIDTH:-1920}
+      BROWSER_HEIGHT: ${BROWSER_HEIGHT:-1080}
+      BROWSER_START_URL: ${BROWSER_START_URL:-about:blank}
+      BIND_HOST: 127.0.0.1
+      MAX_SESSIONS: ${MAX_SESSIONS:-4}
+      SESSION_IDLE_TIMEOUT: ${SESSION_IDLE_TIMEOUT:-1h}
+      CDP_AUTH_TOKEN: ${CDP_AUTH_TOKEN:-}
+    shm_size: "2g"

@@ -1,0 +1,26 @@
+# Local personal use on a named Docker bridge.
+# Publishes noVNC and managed CDP to host loopback only.
+services:
+  chrome:
+    image: ${IMAGE:-docker.io/psycharch/chrome-novnc-cdp:latest}
+    container_name: chrome-novnc-cdp
+    restart: unless-stopped
+    networks:
+      - chrome-novnc-cdp
+    ports:
+      - "127.0.0.1:6080:6080"
+      - "127.0.0.1:9222:9222"
+    environment:
+      TZ: ${TZ:-UTC}
+      BROWSER_WIDTH: ${BROWSER_WIDTH:-1920}
+      BROWSER_HEIGHT: ${BROWSER_HEIGHT:-1080}
+      BROWSER_START_URL: ${BROWSER_START_URL:-about:blank}
+      ENABLE_HOST_GATEWAY: ${ENABLE_HOST_GATEWAY:-false}
+      MAX_SESSIONS: ${MAX_SESSIONS:-4}
+      SESSION_IDLE_TIMEOUT: ${SESSION_IDLE_TIMEOUT:-1h}
+      CDP_AUTH_TOKEN: ${CDP_AUTH_TOKEN:-}
+    shm_size: "2g"
+
+networks:
+  chrome-novnc-cdp:
+    name: chrome-novnc-cdp
