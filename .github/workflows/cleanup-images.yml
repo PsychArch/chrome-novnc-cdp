@@ -78,7 +78,7 @@ jobs:
               candidates="$(jq -r --argjson cutoff "${cutoff_epoch}" '
                 .results[]
                 | . as $tag
-                | (($tag.tag_last_pushed // $tag.last_updated) | fromdateiso8601) as $pushed
+                | (($tag.tag_last_pushed // $tag.last_updated) | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) as $pushed
                 | select($pushed < $cutoff)
                 | [$tag.name, ($tag.tag_last_pushed // $tag.last_updated)]
                 | @tsv
