@@ -1,0 +1,173 @@
+name: cleanup images
+
+on:
+  workflow_dispatch:
+    inputs:
+      retention_months:
+        description: Calendar months of released images to keep
+        required: true
+        default: '2'
+      dry_run:
+        description: List candidates without deleting them
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      PACKAGE_NAME: chrome-novnc-cdp
+      DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
+      RETENTION_MONTHS: ${{ inputs.retention_months }}
+      DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - name: Cleanup Docker Hub and GHCR images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cutoff_epoch="$(date -u -d "${RETENTION_MONTHS} months ago" +%s)"
+          cutoff_iso="$(date -u -d "@${cutoff_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
+          owner="${GITHUB_REPOSITORY_OWNER}"
+          repo="${GITHUB_REPOSITORY#*/}"
+
+          echo "Keeping images pushed on or after ${cutoff_iso}."
+          echo "Dry run: ${DRY_RUN}"
+
+          http_delete() {
+            local url="$1"
+            local auth_header="$2"
+            local code
+            code="$(curl -sS -o /tmp/delete-response.txt -w '%{http_code}' \
+              -X DELETE -H "${auth_header}" "${url}")"
+            if [[ "${code}" != "204" && "${code}" != "202" ]]; then
+              echo "Delete failed (${code}) for ${url}" >&2
+              cat /tmp/delete-response.txt >&2 || true
+              return 1
+            fi
+          }
+
+          cleanup_dockerhub() {
+            if [[ -z "${DOCKERHUB_NAMESPACE}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+              echo "Skipping Docker Hub: DOCKERHUB_USERNAME or DOCKERHUB_TOKEN is not configured."
+              return 0
+            fi
+
+            local login_json jwt page url tags_json candidates
+            login_json="$(jq -cn --arg username "${DOCKERHUB_NAMESPACE}" --arg password "${DOCKERHUB_TOKEN}" \
+              '{username:$username,password:$password}')"
+            jwt="$(curl -sS -f -H 'Content-Type: application/json' -d "${login_json}" \
+              https://hub.docker.com/v2/users/login/ | jq -r '.token // empty')"
+            if [[ -z "${jwt}" ]]; then
+              echo "Docker Hub login did not return a token." >&2
+              return 1
+            fi
+
+            page=1
+            while :; do
+              url="https://hub.docker.com/v2/repositories/${DOCKERHUB_NAMESPACE}/${repo}/tags?page_size=100&page=${page}"
+              tags_json="$(curl -sS -f -H "Authorization: JWT ${jwt}" "${url}")"
+              candidates="$(jq -r --argjson cutoff "${cutoff_epoch}" '
+                .results[]
+                | . as $tag
+                | (($tag.tag_last_pushed // $tag.last_updated) | fromdateiso8601) as $pushed
+                | select($pushed < $cutoff)
+                | [$tag.name, ($tag.tag_last_pushed // $tag.last_updated)]
+                | @tsv
+              ' <<<"${tags_json}")"
+
+              if [[ -n "${candidates}" ]]; then
+                while IFS=$'\t' read -r tag pushed_at; do
+                  [[ -n "${tag}" ]] || continue
+                  if [[ "${DRY_RUN}" == "true" ]]; then
+                    echo "Docker Hub would delete ${DOCKERHUB_NAMESPACE}/${repo}:${tag} (${pushed_at})"
+                  else
+                    echo "Docker Hub deleting ${DOCKERHUB_NAMESPACE}/${repo}:${tag} (${pushed_at})"
+                    http_delete "https://hub.docker.com/v2/repositories/${DOCKERHUB_NAMESPACE}/${repo}/tags/${tag}/" \
+                      "Authorization: JWT ${jwt}"
+                  fi
+                done <<<"${candidates}"
+              fi
+
+              if [[ "$(jq -r '.next // empty' <<<"${tags_json}")" == "" ]]; then
+                break
+              fi
+              page=$((page + 1))
+            done
+          }
+
+          list_ghcr_versions() {
+            local token="$1"
+            local owner_path="$2"
+            local page=1
+            local out='[]'
+            local body code
+            while :; do
+              code="$(curl -sS -o /tmp/ghcr-versions.json -w '%{http_code}' \
+                -H 'Accept: application/vnd.github+json' \
+                -H "Authorization: Bearer ${token}" \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "https://api.github.com/${owner_path}/packages/container/${PACKAGE_NAME}/versions?per_page=100&page=${page}")"
+              if [[ "${code}" != "200" ]]; then
+                return 1
+              fi
+              body="$(cat /tmp/ghcr-versions.json)"
+              if [[ "$(jq 'length' <<<"${body}")" -eq 0 ]]; then
+                break
+              fi
+              out="$(jq -s 'add' <(printf '%s' "${out}") <(printf '%s' "${body}"))"
+              page=$((page + 1))
+            done
+            printf '%s' "${out}"
+          }
+
+          cleanup_ghcr() {
+            local token owner_path versions candidates
+            token="${GHCR_TOKEN:-${GITHUB_TOKEN}}"
+            if [[ -z "${token}" ]]; then
+              echo "Skipping GHCR: no GHCR_TOKEN or GITHUB_TOKEN is available."
+              return 0
+            fi
+
+            owner_path="users/${owner}"
+            if ! versions="$(list_ghcr_versions "${token}" "${owner_path}")"; then
+              owner_path="orgs/${owner}"
+              versions="$(list_ghcr_versions "${token}" "${owner_path}")"
+            fi
+
+            candidates="$(jq -r --argjson cutoff "${cutoff_epoch}" '
+              .[]
+              | . as $version
+              | (.created_at | fromdateiso8601) as $created
+              | select($created < $cutoff)
+              | [$version.id, $version.created_at, (($version.metadata.container.tags // []) | join(","))]
+              | @tsv
+            ' <<<"${versions}")"
+
+            if [[ -z "${candidates}" ]]; then
+              echo "GHCR has no image versions older than ${cutoff_iso}."
+              return 0
+            fi
+
+            while IFS=$'\t' read -r id created_at tags; do
+              [[ -n "${id}" ]] || continue
+              if [[ "${DRY_RUN}" == "true" ]]; then
+                echo "GHCR would delete version ${id} (${created_at}) tags=[${tags}]"
+              else
+                echo "GHCR deleting version ${id} (${created_at}) tags=[${tags}]"
+                http_delete "https://api.github.com/${owner_path}/packages/container/${PACKAGE_NAME}/versions/${id}" \
+                  "Authorization: Bearer ${token}"
+              fi
+            done <<<"${candidates}"
+          }
+
+          cleanup_dockerhub
+          cleanup_ghcr
