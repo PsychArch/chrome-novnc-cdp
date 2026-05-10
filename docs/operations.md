@@ -156,6 +156,7 @@ Manual checks:
 
 ```bash
 curl -fsS http://127.0.0.1:6080/ >/dev/null
+curl -fsS http://127.0.0.1:9222/openapi.json
 curl -fsS http://127.0.0.1:9222/healthz
 curl -fsS http://127.0.0.1:9222/json/version
 ```
@@ -192,6 +193,7 @@ CDP_ALLOW_QUERY_TOKEN=false
 Explicit API:
 
 ```text
+GET    /openapi.json
 GET    /healthz
 GET    /readyz
 POST   /sessions
@@ -204,6 +206,8 @@ PUT    /sessions/:id/json/new?url=...
 DELETE /sessions/:id/json/close/:targetId
 WS     /sessions/:id/cdp
 ```
+
+`GET /openapi.json` describes the managed API and does not start Chromium.
 
 Compatibility API:
 

@@ -47,6 +47,28 @@ jobs:
             fi
             sleep 2
           done
+          curl -fsS http://127.0.0.1:9222/openapi.json > /tmp/openapi.json
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const spec = JSON.parse(fs.readFileSync('/tmp/openapi.json', 'utf8'));
+          if (!spec.openapi) {
+            console.error('OpenAPI smoke failed: missing openapi field');
+            process.exit(1);
+          }
+          if (!spec.paths || !spec.paths['/sessions']) {
+            console.error('OpenAPI smoke failed: missing /sessions path');
+            process.exit(1);
+          }
+          if (!spec.paths['/sessions/{sessionId}/cdp']) {
+            console.error('OpenAPI smoke failed: missing /sessions/{sessionId}/cdp path');
+            process.exit(1);
+          }
+          const serialized = JSON.stringify(spec);
+          if (serialized.includes('9223') || serialized.includes('PRIVATE_CDP_PORT')) {
+            console.error('OpenAPI smoke failed: private Chromium port is documented');
+            process.exit(1);
+          }
+          NODE
 
           session_json="$(curl -fsS -X POST http://127.0.0.1:9222/sessions)"
           session_id="$(SESSION_JSON="$session_json" node -e '

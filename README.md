@@ -83,10 +83,14 @@ one managed session when capacity is available.
 Explicit session API examples:
 
 ```bash
+curl -fsS http://127.0.0.1:9222/openapi.json
 curl -fsS -X POST http://127.0.0.1:9222/sessions
 curl -fsS http://127.0.0.1:9222/sessions
 curl -fsS http://127.0.0.1:9222/json/version
 ```
+
+The OpenAPI spec documents the managed API on `9222`. WebSocket payloads use
+the Chrome DevTools Protocol.
 
 Each managed session is one Chromium `BrowserContext`. Use the returned existing
 context from CDP clients; creating extra browser contexts is intentionally

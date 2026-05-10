@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
+import { buildOpenApiDocument } from './openapi.mjs';
 
 const env = process.env;
 const config = {
@@ -918,6 +919,10 @@ async function handleHttp(req, res) {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const pathname = stripPublicBasePath(url.pathname);
   try {
+    if (pathname === '/openapi.json' && req.method === 'GET') {
+      jsonResponse(res, 200, buildOpenApiDocument(config));
+      return;
+    }
     if (pathname === '/healthz') {
       jsonResponse(res, 200, { ok: true, service: 'managed-cdp', sessions: sessions.size });
       return;
