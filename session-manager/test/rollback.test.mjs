@@ -4,8 +4,13 @@ import { test } from 'node:test';
 import { delay } from './helpers.mjs';
 
 const base = process.env.MANAGED_CDP_ROLLBACK_URL;
+const servicePorts = new Set([5900, 6080, 9222]);
 const listeners = () => fs.readFileSync('/proc/net/tcp', 'utf8').trim().split('\n').slice(1)
-  .filter((line) => line.trim().split(/\s+/)[3] === '0A').map((line) => line.trim().split(/\s+/)[1]).sort();
+  .filter((line) => line.trim().split(/\s+/)[3] === '0A')
+  .map((line) => line.trim().split(/\s+/)[1])
+  // x11vnc may restart after Xvfb becomes ready. Its fixed service port is
+  // unrelated to the ephemeral session relay and private Chromium listeners.
+  .filter((address) => !servicePorts.has(Number.parseInt(address.split(':')[1], 16))).sort();
 
 test('failed initial target creation disposes its context, relay, and capacity', { skip: !base, timeout: 30000 }, async () => {
   const before = listeners();
