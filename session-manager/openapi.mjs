@@ -1,3 +1,5 @@
+import packageInfo from './package.json' with { type: 'json' };
+
 function errorResponses(...statuses) {
   return Object.fromEntries(
     statuses.map((status) => [
@@ -7,6 +9,8 @@ function errorResponses(...statuses) {
           400: 'Bad request',
           401: 'Unauthorized',
           404: 'Not found',
+          413: 'Request body exceeds 16 KiB',
+          415: 'Unsupported media type or content encoding',
           429: 'Session capacity reached',
           500: 'Internal server error',
         }[status],
@@ -51,7 +55,7 @@ export function buildOpenApiDocument(config = {}) {
     openapi: '3.1.0',
     info: {
       title: 'chrome-novnc-cdp Managed CDP API',
-      version: '1.0.0',
+      version: packageInfo.version,
       description: [
         'Documents the public managed CDP/session API exposed on the service port.',
         'WebSocket payloads use the Chrome DevTools Protocol.',
@@ -125,7 +129,17 @@ export function buildOpenApiDocument(config = {}) {
         post: {
           tags: ['Sessions'],
           summary: 'Create a managed browser session',
+          description: 'Proxy settings are fixed at creation. Empty bodies, an omitted proxy, and proxy: null preserve the process-wide browser defaults. Credentials are never returned. Request bodies are limited to 16 KiB.',
           security: bearerSecurity,
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/SessionOptions' },
+                example: { proxy: { server: 'http://proxy.example.com:8080', bypass: ['*.internal.example.com'] } },
+              },
+            },
+          },
           responses: {
             201: {
               description: 'Created managed session.',
@@ -135,7 +149,7 @@ export function buildOpenApiDocument(config = {}) {
                 },
               },
             },
-            ...errorResponses(401, 429, 500),
+            ...errorResponses(400, 401, 413, 415, 429, 500),
           },
         },
         get: {
@@ -420,6 +434,34 @@ export function buildOpenApiDocument(config = {}) {
           },
           additionalProperties: false,
         },
+        SessionOptions: {
+          type: 'object',
+          properties: {
+            proxy: { anyOf: [{ $ref: '#/components/schemas/ProxyOptions' }, { type: 'null' }] },
+          },
+          additionalProperties: false,
+        },
+        ProxyOptions: {
+          type: 'object',
+          required: ['server'],
+          properties: {
+            server: { type: 'string', maxLength: 2048, pattern: '^(https?|socks5h?)://', description: 'HTTP, HTTPS, SOCKS5, or SOCKS5H upstream proxy URL. Credentials, paths other than /, queries, and fragments are rejected. SOCKS destination DNS is resolved remotely.' },
+            username: { type: 'string', minLength: 1, maxLength: 255, writeOnly: true, description: 'HTTP Basic or SOCKS5 username; no colons or control characters.' },
+            password: { type: 'string', maxLength: 255, writeOnly: true, description: 'Requires username; defaults to an empty password. No control characters.' },
+            bypass: { type: 'array', maxItems: 64, items: { type: 'string', minLength: 1, maxLength: 256 }, description: 'Chromium bypass rules, one per item. Matching destinations connect directly. Chromium implicitly bypasses loopback; use <-loopback> to remove that exemption.' },
+          },
+          additionalProperties: false,
+        },
+        ProxySummary: {
+          type: 'object',
+          required: ['server', 'bypass', 'hasAuthentication'],
+          properties: {
+            server: { type: 'string' },
+            bypass: { type: 'array', items: { type: 'string' } },
+            hasAuthentication: { type: 'boolean' },
+          },
+          additionalProperties: false,
+        },
         SessionSummary: {
           type: 'object',
           required: [
@@ -441,6 +483,7 @@ export function buildOpenApiDocument(config = {}) {
             idleExpiresAt: { type: 'string', format: 'date-time' },
             activeConnections: { type: 'integer', minimum: 0 },
             ttlPolicy: { type: 'string' },
+            proxy: { anyOf: [{ $ref: '#/components/schemas/ProxySummary' }, { type: 'null' }] },
           },
           additionalProperties: false,
         },
@@ -466,6 +509,7 @@ export function buildOpenApiDocument(config = {}) {
             idleExpiresAt: { type: 'string', format: 'date-time' },
             activeConnections: { type: 'integer', minimum: 0 },
             ttlPolicy: { type: 'string' },
+            proxy: { anyOf: [{ $ref: '#/components/schemas/ProxySummary' }, { type: 'null' }] },
             links: { $ref: '#/components/schemas/SessionLinks' },
           },
           additionalProperties: false,

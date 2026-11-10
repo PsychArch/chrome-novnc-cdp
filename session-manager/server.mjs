@@ -6,6 +6,8 @@ import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { buildOpenApiDocument } from './openapi.mjs';
+import { ManagedError } from './errors.mjs';
+import { proxySummary, readSessionOptions, startProxyRelay } from './proxy.mjs';
 
 const env = process.env;
 const config = {
@@ -49,7 +51,9 @@ validateConfig();
 
 let chromeProc = null;
 let chromeUserDataDir = null;
+let chromeCleanupPromise = Promise.resolve();
 let chromeStopping = false;
+let chromeStopPromise = null;
 let controlWs = null;
 let controlReady = null;
 let controlId = 0;
@@ -59,13 +63,6 @@ let pendingSessionCreations = 0;
 let compatSessionId = null;
 const targetToSession = new Map();
 let sweepTimer = null;
-
-class ManagedError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
 
 function envValue(primaryName, aliasNames = [], fallback = '') {
   for (const name of [primaryName, ...aliasNames]) {
@@ -240,7 +237,7 @@ class SimpleWebSocket extends EventEmitter {
 }
 
 class Session {
-  constructor({ id, browserContextId, kind }) {
+  constructor({ id, browserContextId, kind, proxy, proxyRelay }) {
     const now = new Date();
     this.id = id;
     this.browserContextId = browserContextId;
@@ -254,6 +251,8 @@ class Session {
     this.clientSockets = new Set();
     this.cdpSessions = new Set();
     this.closing = false;
+    this.proxy = proxySummary(proxy);
+    this.proxyRelay = proxyRelay;
   }
 
   touch() {
@@ -270,6 +269,7 @@ class Session {
       idleExpiresAt: new Date(this.lastActivityAt.getTime() + config.idleTtlMs).toISOString(),
       activeConnections: this.activeConnections,
       ttlPolicy: 'idle',
+      proxy: this.proxy,
     };
   }
 }
@@ -445,6 +445,7 @@ function onceEvent(emitter, eventName) {
 }
 
 async function ensureChrome() {
+  if (chromeStopPromise) await chromeStopPromise;
   if (chromeProc && !chromeProc.killed && controlWs && !controlWs.closed) return;
   if (controlReady) return controlReady;
   controlReady = startChromeAndControl().finally(() => {
@@ -469,27 +470,30 @@ async function startChromeAndControl() {
       `--user-data-dir=${chromeUserDataDir}`,
       `--window-size=${config.screenWidth},${config.screenHeight}`,
       ...config.chromeExtraArgs,
-      config.startUrl,
+      'about:blank',
     ];
     chromeProc = spawn('chromium-browser', args, {
       env: { ...process.env, DISPLAY: process.env.DISPLAY || ':99', HOME: '/home/chrome' },
       stdio: ['ignore', 'inherit', 'inherit'],
     });
-    chromeProc.once('exit', (code, signal) => onChromeExit(code, signal));
+    const proc = chromeProc;
+    proc.once('exit', (code, signal) => onChromeExit(proc, code, signal));
   }
 
   let lastError;
   for (let attempt = 0; attempt < 80; attempt += 1) {
     try {
       const version = await httpJson('/json/version');
-      controlWs = await connectWebSocket(version.webSocketDebuggerUrl);
-      controlWs.on('message', (message) => handleControlMessage(message));
-      controlWs.on('close', () => {
+      const ws = await connectWebSocket(version.webSocketDebuggerUrl);
+      controlWs = ws;
+      ws.on('message', (message) => handleControlMessage(message));
+      ws.on('close', () => {
+        if (controlWs !== ws) return;
+        controlWs = null;
         rejectControlPending(new Error('Chromium control connection closed'));
         if (!chromeStopping) {
           failAllSessions('control connection closed');
-          chromeStopping = true;
-          chromeProc?.kill('SIGTERM');
+          stopChrome().catch((error) => console.error(error));
         }
       });
       await controlCommand('Target.setDiscoverTargets', { discover: true });
@@ -502,7 +506,8 @@ async function startChromeAndControl() {
   throw lastError || new Error('Chromium did not become ready');
 }
 
-function onChromeExit(code, signal) {
+function onChromeExit(proc, code, signal) {
+  if (chromeProc !== proc) return;
   const wasStopping = chromeStopping;
   chromeProc = null;
   controlWs = null;
@@ -516,9 +521,15 @@ function onChromeExit(code, signal) {
 }
 
 function cleanupChromeTempDir() {
-  if (!chromeUserDataDir) return;
-  fs.rmSync(chromeUserDataDir, { recursive: true, force: true });
+  if (!chromeUserDataDir) return chromeCleanupPromise;
+  const directory = chromeUserDataDir;
   chromeUserDataDir = null;
+  // Chromium workers may still finish writes after the browser process exits.
+  // Retry without blocking the manager or crashing it on a transient ENOTEMPTY.
+  chromeCleanupPromise = fs.promises.rm(directory, {
+    recursive: true, force: true, maxRetries: 10, retryDelay: 100,
+  }).catch(() => console.error('Unable to remove temporary Chromium data'));
+  return chromeCleanupPromise;
 }
 
 function handleControlMessage(message) {
@@ -568,17 +579,23 @@ function rejectControlPending(error) {
   controlPending.clear();
 }
 
-async function createSession(kind = 'explicit') {
+async function createSession(kind = 'explicit', { proxy = null } = {}) {
   if (sessions.size + pendingSessionCreations >= config.maxSessions) {
     throw new ManagedError(429, 'Session capacity reached');
   }
   pendingSessionCreations += 1;
   let session = null;
+  let proxyRelay = null;
+  let browserContextId = null;
   try {
     await ensureChrome();
     const id = `ses_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
-    const { browserContextId } = await controlCommand('Target.createBrowserContext', { disposeOnDetach: false });
-    session = new Session({ id, browserContextId, kind });
+    proxyRelay = await startProxyRelay(proxy);
+    ({ browserContextId } = await controlCommand('Target.createBrowserContext', {
+      disposeOnDetach: false,
+      ...(proxyRelay ? { proxyServer: proxyRelay.server, proxyBypassList: proxy.bypass.join(';') } : {}),
+    }));
+    session = new Session({ id, browserContextId, kind, proxy, proxyRelay });
     sessions.set(id, session);
     const { targetId } = await controlCommand('Target.createTarget', {
       url: config.startUrl,
@@ -592,10 +609,15 @@ async function createSession(kind = 'explicit') {
     if (kind === 'compat') compatSessionId = id;
     return session;
   } catch (error) {
-    if (session) await cleanupSession(session, `create target failed: ${error.message}`);
+    if (session) await cleanupSession(session, 'session creation failed');
+    else {
+      if (browserContextId) await controlCommand('Target.disposeBrowserContext', { browserContextId }).catch(() => {});
+      await proxyRelay?.close();
+    }
     throw error;
   } finally {
     pendingSessionCreations -= 1;
+    if (!session || session.closing) await stopChromeIfIdle();
   }
 }
 
@@ -637,28 +659,47 @@ async function cleanupSession(session, reason = 'deleted') {
     // Chromium may already be gone during crash cleanup.
   }
   sessions.delete(session.id);
+  await closeSessionProxy(session);
   await stopChromeIfIdle();
 }
 
+async function closeSessionProxy(session) {
+  const relay = session.proxyRelay;
+  session.proxyRelay = null;
+  if (relay) await relay.close().catch(() => console.error('Unable to close session proxy relay'));
+}
+
 async function stopChromeIfIdle() {
-  if (sessions.size > 0 || !chromeProc) return;
+  if (sessions.size > 0 || pendingSessionCreations > 0) return;
+  await stopChrome();
+}
+
+async function stopChrome() {
+  if (chromeStopPromise) return chromeStopPromise;
+  if (!chromeProc) return;
   chromeStopping = true;
-  if (controlWs && !controlWs.closed) controlWs.close(1000, 'idle');
+  const ws = controlWs;
   controlWs = null;
-  chromeProc.kill('SIGTERM');
+  if (ws && !ws.closed) ws.close(1000, 'idle');
   const proc = chromeProc;
-  await Promise.race([onceEvent(proc, 'exit').catch(() => {}), delay(3000)]);
-  if (chromeProc === proc) {
-    proc.kill('SIGKILL');
-    chromeProc = null;
-  }
-  cleanupChromeTempDir();
+  chromeStopPromise = (async () => {
+    const exited = onceEvent(proc, 'exit').catch(() => {});
+    proc.kill('SIGTERM');
+    await Promise.race([exited, delay(3000)]);
+    if (chromeProc === proc) {
+      proc.kill('SIGKILL');
+      await exited;
+    }
+    await cleanupChromeTempDir();
+  })().finally(() => { chromeStopPromise = null; });
+  await chromeStopPromise;
 }
 
 function failAllSessions(reason) {
   for (const session of [...sessions.values()]) {
     session.state = 'failed';
     for (const ws of [...session.clientSockets]) ws.close(1011, reason);
+    closeSessionProxy(session).catch(() => {});
     sessions.delete(session.id);
   }
   compatSessionId = null;
@@ -971,7 +1012,8 @@ async function handleHttp(req, res) {
 
     if (pathname === '/sessions' && req.method === 'POST') {
       requireAuth(req, url);
-      const session = await createSession('explicit');
+      const options = await readSessionOptions(req);
+      const session = await createSession('explicit', options);
       jsonResponse(res, 201, { ...session.summary(), links: sessionLinks(req, session) });
       return;
     }

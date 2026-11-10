@@ -14,7 +14,7 @@ login gate, and CDP can control the browser.
 ```bash
 export PUBLIC_HOST=example.com
 export CDP_AUTH_TOKEN='replace-with-a-long-random-token'
-export NOVNC_BASIC_AUTH="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext 'replace-this-password')"
+export NOVNC_BASIC_AUTH="$(docker run --rm caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee caddy hash-password --plaintext 'replace-this-password')"
 docker compose up -d
 ```
 

@@ -43,7 +43,58 @@ Before publishing or opening a PR, run the same source checks used by CI:
 ```bash
 docker compose config
 docker build --pull -t chrome-novnc-cdp:test .
+sh scripts/test-proxies.sh
 ```
+
+The proxy test script starts isolated containers and local proxy/origin fixtures,
+then removes its containers. It covers concurrent routing, Basic and SOCKS5
+authentication, HTTPS upstreams and CONNECT, remote DNS, bypass rules, failure
+behavior, redaction, capacity, expiry, deletion, crash recovery, and rollback.
+The test CA and certificate override apply only to these test containers. Test
+files, including the test-only private key, are excluded from the production image.
+
+For a build behind an inspecting HTTPS proxy, optionally mount a trusted CA bundle:
+
+```bash
+docker build --pull \
+  --secret id=proxy_ca,src=/path/to/trusted-ca-bundle.pem \
+  -t chrome-novnc-cdp:test .
+```
+
+The bundle is mounted only during networked build steps and is not saved in image
+layers. Production HTTPS proxy connections verify certificates using Node's trust
+store; use `NODE_EXTRA_CA_CERTS` with a mounted CA when a private upstream requires it.
+
+## Dependency Policy
+
+Release `v2026.11.10` uses Alpine 3.24.4, noVNC 1.7.0, websockify 0.13.0, and
+proxy-chain 3.0.3. Base and example Caddy images use multi-platform digest pins;
+GitHub Actions use full commit pins with version comments. `package-lock.json`
+locks the relay's transitive dependencies and the image installs them with
+`npm ci --omit=dev --ignore-scripts` in a separate build stage.
+
+APK dependencies track the latest versions in the stable Alpine 3.24 repositories,
+including Chromium 156, Node 24 LTS, and Python 3.14 at release time. They do not
+track Alpine edge or every upstream project's newest release (for example,
+upstream Node 26 LTS is newer). Refresh APK packages on rebuild. The release
+version is maintained in `session-manager/package.json` and its lockfile and is
+also exposed as the OpenAPI document version.
+
+## Session Proxy Lifecycle
+
+`POST /sessions` accepts an optional JSON `proxy` object; see the README and
+`/openapi.json` for the request schema and sanitized response shape. Proxied
+sessions get a dedicated HTTP relay bound to `127.0.0.1` on an ephemeral port.
+The relay forwards to the configured upstream and owns its own connection pools.
+Its URL and the bypass rules are passed to `Target.createBrowserContext` before
+the first session page is created. Chromium's unmanaged startup page is always
+`about:blank`; `BROWSER_START_URL` is loaded inside each managed context.
+
+Delete, idle expiry, failed creation, browser failure, and service shutdown close
+the session relay and its connections. No extra relay ports are published.
+Credentials remain in process memory for the session lifetime and are not placed
+in Chromium arguments or session summaries. HTTP proxy authentication is Basic;
+NTLM, Kerberos, PAC scripts, and live proxy changes are not supported.
 
 ## Runtime Configuration
 

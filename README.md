@@ -100,6 +100,46 @@ Sessions use temporary browser data. The image does not automatically persist
 cookies, localStorage, or IndexedDB to `/data`; export and restore client-side
 state yourself, such as Playwright `storageState`, when you need persistence.
 
+### Per-session proxies
+
+Pass proxy settings when creating an explicit session:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:9222/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{"proxy":{"server":"http://proxy.example.com:8080","username":"user","password":"password","bypass":["*.internal.example.com"]}}'
+```
+
+Connect your CDP client to the returned `links.cdp` URL and use its existing
+browser context. Each session can use a different proxy while sharing one
+Chromium process. Settings are fixed for the lifetime of the session; create a
+new session to change them.
+
+Supported upstream URLs are `http://`, `https://`, `socks5://`, and `socks5h://`.
+HTTP/HTTPS proxies support Basic authentication; SOCKS5 supports username/password
+authentication. Supply credentials in separate fields, without URL encoding.
+SOCKS destination hostnames are resolved by the upstream proxy.
+
+`bypass` is an optional array of Chromium proxy bypass rules. Matching requests
+connect directly. Chromium also bypasses loopback destinations by default; add
+`"<-loopback>"` to the array to send loopback requests through the proxy.
+Unreachable proxies and authentication failures do not trigger direct fallback.
+
+Empty bodies, an omitted `proxy`, and `"proxy": null` keep the existing browser
+defaults, including any global proxy flags in `BROWSER_EXTRA_ARGS`. A configured
+session proxy overrides that global proxy for its context. Compatibility
+auto-sessions continue to use the global defaults; use explicit sessions for
+individual proxies.
+
+The API returns only `server`, `bypass`, and `hasAuthentication` in its proxy
+summary. It never returns usernames or passwords. Request bodies must be JSON
+and are limited to 16 KiB. Use HTTPS when sending credentials to a remote API.
+In bridge networking, reach host proxies using `host.docker.internal` with
+`ENABLE_HOST_GATEWAY=true`; `127.0.0.1` refers to the container itself.
+
+These settings route session browsing traffic. They do not proxy the CDP/noVNC
+connection or provide network isolation for Chromium's entire shared process.
+
 ## Configuration
 
 Common runtime settings:
@@ -180,7 +220,7 @@ the reverse proxy. It uses one public hostname with path prefixes:
 cd examples/public-reverse-proxy
 export PUBLIC_HOST=example.com
 export CDP_AUTH_TOKEN='replace-with-a-long-random-token'
-export NOVNC_BASIC_AUTH="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext 'replace-this-password')"
+export NOVNC_BASIC_AUTH="$(docker run --rm caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee caddy hash-password --plaintext 'replace-this-password')"
 docker compose up -d
 ```
 
@@ -209,4 +249,5 @@ docker rm -f chrome-novnc-cdp
 ## More
 
 - Runtime details and source-based usage: [docs/operations.md](docs/operations.md)
+- Release changes: [CHANGELOG.md](CHANGELOG.md)
 - License: `MIT`

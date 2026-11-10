@@ -3,3 +3,5 @@
 .env
 chrome-profile
 README.md
+**/node_modules
+session-manager/test

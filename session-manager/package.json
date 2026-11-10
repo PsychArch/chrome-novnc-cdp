@@ -1,0 +1,15 @@
+{
+  "name": "chrome-novnc-cdp",
+  "version": "2026.11.10",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "proxy-chain": "3.0.3"
+  }
+}
